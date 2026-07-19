@@ -15,21 +15,51 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  test:
+    runs-on: blacksmith-4vcpu-ubuntu-2404-arm
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Validate the synthetic merge commit for pull requests so tests also
+          # catch incompatibilities with the current base branch.
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Test
+        run: go test ./...
+
   build-and-push-image:
+    needs: test
     strategy:
+      fail-fast: false
       matrix:
         image: ["operator", "account-server"]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404-arm
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+        with:
+          # Pull-request builds publish the immutable head SHA consumed by the
+          # dependent infra PR, rather than GitHub's synthetic merge SHA.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -53,18 +83,21 @@ jobs:
             type=semver,pattern={{major}}
             type=ref,event=branch
             type=ref,event=pr
-            type=sha
-            type=sha,format=long
-            type=sha,prefix={{branch}}-,enable=${{ !startsWith(github.ref, 'refs/tags') }},event=branch
-            type=sha,format=long,prefix={{branch}}-,enable=${{ !startsWith(github.ref, 'refs/tags') }},event=branch
+            type=sha,enable=${{ github.event_name != 'pull_request' }}
+            type=sha,format=long,enable=${{ github.event_name != 'pull_request' }}
+            type=sha,prefix={{branch}}-,enable=${{ github.event_name == 'push' && github.ref_type == 'branch' }}
+            type=sha,format=long,prefix={{branch}}-,enable=${{ github.event_name == 'push' && github.ref_type == 'branch' }}
+            type=raw,value=sha-${{ github.event.pull_request.head.sha }},enable=${{ github.event_name == 'pull_request' }}
 
       - name: Build and push Docker Images
         uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: "TARGET=${{ matrix.image }}"
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
