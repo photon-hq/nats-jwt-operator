@@ -85,6 +85,11 @@ func (r *NatsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	issuer := &natsv1alpha1.NatsOperator{}
 	signerSecret := &corev1.Secret{}
 	for {
+		select {
+		case <-ctx.Done():
+			return ctrl.Result{}, ctx.Err()
+		default:
+		}
 		if err := r.Get(ctx, client.ObjectKey{
 			Namespace: req.Namespace,
 			Name:      account.Spec.OperatorRef.Name,
@@ -94,8 +99,12 @@ func (r *NatsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 		if issuer.Status.OperatorSecretName == "" {
 			logger.Info("waiting for issuing account secret to appear")
-			<-time.After(5 * time.Second)
-			continue
+			select {
+			case <-ctx.Done():
+				return ctrl.Result{}, ctx.Err()
+			case <-time.After(5 * time.Second):
+				continue
+			}
 		}
 
 		if err := r.Get(ctx, client.ObjectKey{

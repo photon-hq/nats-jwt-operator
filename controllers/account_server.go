@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -36,6 +37,7 @@ type NatsAccountServer struct {
 	client.Client
 	Scheme     *runtime.Scheme
 	accountMap map[string]string
+	accountMu  sync.RWMutex
 	nc         *nats.Conn
 }
 
@@ -59,7 +61,9 @@ func (r *NatsAccountServer) Run(ctx context.Context, url string, credsFile strin
 		accountId := strings.TrimSuffix(strings.TrimPrefix(msg.Subject, "$SYS.REQ.ACCOUNT."), ".CLAIMS.LOOKUP")
 		logger.Info("account lookup", "accountId", accountId)
 
+		r.accountMu.RLock()
 		accountToken := r.accountMap[accountId]
+		r.accountMu.RUnlock()
 
 		if err := msg.Respond([]byte(accountToken)); err != nil {
 			logger.Info("Failed to respond to NATS with token: %v", err)
@@ -90,12 +94,16 @@ func (r *NatsAccountServer) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if account.DeletionTimestamp != nil {
 		// We're not further processing the deletion here.
 		// TODO: correctly handle account revocation
+		r.accountMu.Lock()
 		delete(r.accountMap, account.Status.PublicKey)
+		r.accountMu.Unlock()
 		return ctrl.Result{}, nil
 	}
 
 	if account.Status.JWT != "" && account.Status.PublicKey != "" {
+		r.accountMu.Lock()
 		r.accountMap[account.Status.PublicKey] = account.Status.JWT
+		r.accountMu.Unlock()
 
 		if r.nc != nil {
 			go func() {
