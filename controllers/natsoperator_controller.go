@@ -109,6 +109,11 @@ func (r *NatsOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		Name:      fmt.Sprintf("%v-system", req.Name),
 	}
 	for {
+		select {
+		case <-ctx.Done():
+			return ctrl.Result{}, ctx.Err()
+		default:
+		}
 		if err := r.Get(ctx, systemAccountName, systemAccount); errors.IsNotFound(err) {
 			logger.Info("creating system account")
 			systemAccount.Name = systemAccountName.Name
@@ -149,7 +154,11 @@ func (r *NatsOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		} else if systemAccount.Status.JWT == "" {
 			// Object has been found, but JWT hasn't been issued, wait until it has been issued
 			logger.Info("waiting for system account to become ready")
-			<-time.After(5 * time.Second)
+			select {
+			case <-ctx.Done():
+				return ctrl.Result{}, ctx.Err()
+			case <-time.After(5 * time.Second):
+			}
 		} else {
 			break
 		}
@@ -162,6 +171,11 @@ func (r *NatsOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		Name:      fmt.Sprintf("%v-jwt", req.Name),
 	}
 	for {
+		select {
+		case <-ctx.Done():
+			return ctrl.Result{}, ctx.Err()
+		default:
+		}
 		if err := r.Get(ctx, systemUserName, systemUser); errors.IsNotFound(err) {
 			logger.Info("creating jwt system user")
 			systemUser.Name = systemUserName.Name
@@ -209,7 +223,11 @@ func (r *NatsOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		} else if systemUser.Status.JWT == "" {
 			// Object has been found but jwt not issued yet
 			logger.Info("waiting for system user to become ready")
-			<-time.After(5 * time.Second)
+			select {
+			case <-ctx.Done():
+				return ctrl.Result{}, ctx.Err()
+			case <-time.After(5 * time.Second):
+			}
 		} else {
 			break
 		}

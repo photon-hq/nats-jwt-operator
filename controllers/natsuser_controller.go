@@ -95,6 +95,11 @@ func (r *NatsUserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	issuingAccount := &natsv1alpha1.NatsAccount{}
 	signerSecret := &corev1.Secret{}
 	for {
+		select {
+		case <-ctx.Done():
+			return ctrl.Result{}, ctx.Err()
+		default:
+		}
 		if err := r.Get(ctx, client.ObjectKey{
 			Namespace: user.Spec.AccountRef.Namespace,
 			Name:      user.Spec.AccountRef.Name,
@@ -104,8 +109,12 @@ func (r *NatsUserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 		if issuingAccount.Status.AccountSecretName == "" {
 			logger.Info("waiting for issuing account secret to appear")
-			<-time.After(5 * time.Second)
-			continue
+			select {
+			case <-ctx.Done():
+				return ctrl.Result{}, ctx.Err()
+			case <-time.After(5 * time.Second):
+				continue
+			}
 		}
 
 		if !slices.Contains(issuingAccount.Spec.AllowUserNamespaces, req.Namespace) {
